@@ -17,6 +17,7 @@ import com.mongodb.client.result.UpdateResult;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import net.hypixel.nerdbot.NerdBotApp;
+import net.hypixel.nerdbot.api.database.model.user.DiscordUser;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import org.jetbrains.annotations.Nullable;
@@ -99,6 +100,13 @@ public abstract class Repository<T> {
 
         debug("Could not find document with ID " + id + " in cache or database");
         return null;
+    }
+
+    public T getByIndex(int index) {
+        return getCache().asMap().values().stream()
+            .skip(index)
+            .findFirst()
+            .orElse(null);
     }
 
     public void cacheObject(String id, T object) {

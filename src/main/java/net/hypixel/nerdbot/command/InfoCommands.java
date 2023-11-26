@@ -15,11 +15,9 @@ import com.freya02.botcommands.api.pagination.paginator.PaginatorBuilder;
 import lombok.extern.log4j.Log4j2;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
-import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.Member;
-import net.dv8tion.jda.api.entities.Role;
-import net.dv8tion.jda.api.entities.SelfUser;
+import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.entities.emoji.RichCustomEmoji;
+import net.dv8tion.jda.internal.utils.tuple.Pair;
 import net.hypixel.nerdbot.NerdBotApp;
 import net.hypixel.nerdbot.api.database.Database;
 import net.hypixel.nerdbot.api.database.model.greenlit.GreenlitMessage;
@@ -43,7 +41,8 @@ import java.util.stream.Collectors;
 @Log4j2
 public class InfoCommands extends ApplicationCommand {
 
-    private static final String GREENLIT_SELECTION_MENU_HANDLER_NAME = "greenlit";
+    private static final String GREENLIT_SELECTION_MENU_HANDLER_NAME = "greenlit_selection_menu";
+    private static final String ACTIVITY_SELECTION_MENU_HANDLER_NAME = "activity_selection_menu";
     private static final int MAX_ENTRIES_PER_PAGE = 25;
     private static final String[] SPECIAL_ROLES = {"Ultimate Nerd", "Ultimate Nerd But Red", "Game Master"};
 
@@ -110,7 +109,7 @@ public class InfoCommands extends ApplicationCommand {
     }
 
     @JDASelectionMenuListener(name = GREENLIT_SELECTION_MENU_HANDLER_NAME)
-    public void run(StringSelectionEvent event) {
+    public void runGreenlitMenuHandler(StringSelectionEvent event) {
         GreenlitMessageRepository repository = NerdBotApp.getBot().getDatabase().getRepositoryManager().getRepository(GreenlitMessageRepository.class);
         GreenlitMessage greenlitMessage = repository.findById(event.getValues().get(0));
 
@@ -151,29 +150,76 @@ public class InfoCommands extends ApplicationCommand {
     }
 
     @JDASlashCommand(name = "info", subcommand = "activity", description = "View information regarding user activity", defaultLocked = true)
-    public void userActivityInfo(GuildSlashEvent event, @AppOption int page) {
+    public void userActivityInfo(GuildSlashEvent event) {
         if (!database.isConnected()) {
             event.reply("Couldn't connect to the database!").setEphemeral(true).queue();
             return;
         }
 
         DiscordUserRepository repository = NerdBotApp.getBot().getDatabase().getRepositoryManager().getRepository(DiscordUserRepository.class);
-        List<DiscordUser> users = getDiscordUsers(repository);
-        users.sort(Comparator.comparingLong(discordUser -> discordUser.getLastActivity().getLastGlobalActivity()));
+        List<EmbedBuilder> embeds = new ArrayList<>();
 
-        StringBuilder stringBuilder = new StringBuilder("**Page " + page + "**\n");
+        if (repository.isEmpty()) {
+            event.reply("Could not find any users!").setEphemeral(true).queue();
+            return;
+        }
 
-        getPage(users, page, 10).forEach(discordUser -> {
-            Member member = Util.getMainGuild().getMemberById(discordUser.getDiscordId());
+        repository.getAll().forEach(user -> {
+            Member member = Util.getMainGuild().getMemberById(user.getDiscordId());
+
             if (member == null) {
-                log.error("Couldn't find member " + discordUser.getDiscordId());
                 return;
             }
 
-            stringBuilder.append(" • ").append(member.getUser().getAsMention()).append(" (").append(new DiscordTimestamp(discordUser.getLastActivity().getLastGlobalActivity()).toLongDateTime()).append(")").append("\n");
+            embeds.add(MyCommands.getActivityEmbeds(member).getLeft());
         });
 
-        event.reply(stringBuilder.toString()).setEphemeral(true).queue();
+        Paginator paginator = new PaginatorBuilder()
+            .setConstraints(InteractionConstraints.ofUsers(event.getUser()))
+            .setPaginatorSupplier((instance, editBuilder, components, page) -> {
+                PersistentStringSelectionMenuBuilder builder = Components.stringSelectionMenu(ACTIVITY_SELECTION_MENU_HANDLER_NAME);
+                int lowerBound = page == 0 ? 0 : MAX_ENTRIES_PER_PAGE * page;
+                int upperBound = MAX_ENTRIES_PER_PAGE + (page * MAX_ENTRIES_PER_PAGE);
+
+                for (int i = lowerBound; i < upperBound; i++) {
+                    if (i >= embeds.size()) {
+                        break;
+                    }
+
+                    DiscordUser discordUser = repository.getByIndex(i);
+                    Member member = Util.getMainGuild().getMemberById(discordUser.getDiscordId());
+
+                    if (member == null) {
+                        continue;
+                    }
+
+                    builder.addOption(member.getEffectiveName(), discordUser.getDiscordId());
+                }
+
+                components.addComponents(builder.build());
+                return embeds.get(lowerBound).build();
+            })
+            .setMaxPages(embeds.size() / MAX_ENTRIES_PER_PAGE)
+            .build();
+
+        event.getHook().editOriginal(paginator.get()).queue();
+    }
+
+    @JDASelectionMenuListener(name = ACTIVITY_SELECTION_MENU_HANDLER_NAME)
+    public void runActivityMenuHandler(StringSelectionEvent event) {
+        DiscordUserRepository repository = NerdBotApp.getBot().getDatabase().getRepositoryManager().getRepository(DiscordUserRepository.class);
+        DiscordUser discordUser = repository.findById(event.getValues().get(0));
+        Member member = Util.getMainGuild().getMemberById(discordUser.getDiscordId());
+
+        if (member == null) {
+            log.error("Couldn't find member " + discordUser.getDiscordId());
+            event.getHook().editOriginal("Couldn't find member `" + discordUser.getDiscordId() + "`").queue();
+            return;
+        }
+
+        event.deferReply(true).complete();
+        Pair<EmbedBuilder, EmbedBuilder> activityEmbeds = MyCommands.getActivityEmbeds(member);
+        event.getHook().editOriginalEmbeds(activityEmbeds.getLeft().build(), activityEmbeds.getRight().build()).queue();
     }
 
     @NotNull
