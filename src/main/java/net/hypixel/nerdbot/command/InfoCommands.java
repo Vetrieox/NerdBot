@@ -151,8 +151,10 @@ public class InfoCommands extends ApplicationCommand {
 
     @JDASlashCommand(name = "info", subcommand = "activity", description = "View information regarding user activity", defaultLocked = true)
     public void userActivityInfo(GuildSlashEvent event) {
+        event.deferReply(true).complete();
+
         if (!database.isConnected()) {
-            event.reply("Couldn't connect to the database!").setEphemeral(true).queue();
+            event.getHook().editOriginal("Couldn't connect to the database!").queue();
             return;
         }
 
@@ -160,7 +162,7 @@ public class InfoCommands extends ApplicationCommand {
         List<EmbedBuilder> embeds = new ArrayList<>();
 
         if (repository.isEmpty()) {
-            event.reply("Could not find any users!").setEphemeral(true).queue();
+            event.getHook().editOriginal("Could not find any users!").queue();
             return;
         }
 
